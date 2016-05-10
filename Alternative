@@ -1,0 +1,213 @@
+### Required packages
+
+library("MTS"); library("clusterGeneration"); library("plotrix"); library("fit.models"); library("devtools"); 
+library("Rcpp"); library("RcppArmadillo"); library("RcppEigen"); library("MASS"); library("portes"); 
+library ("parallel"); library("mvtnorm"); library("plotly"); library("RColorBrewer"); 
+
+set.seed(1234)
+
+#options(max.print=10000000)
+
+### 2 functions to generate a VAR(p) and its coefficient matrix
+
+gen_A = function(	# returns a list of d matrices A_1, ..., A_d
+  p		# generate p x p VAR
+  ,d	# generate VAR(d)
+  ,max_eig 	# spectral norm of A
+  ,edge_density  # if diferent for different lags, provide a vector of length d
+  ,nonzero_diag  # ensure all diagonal entries are non-zero; if different for different lags, provide a d-vector of 0 and 1
+  ,stationary 	# ensure stationarity
+  #,network.family # "random"	# A matrix filled randomly or with specific structure
+){
+  
+  A = list()
+  for (lag in 1:d){
+    e_d = ceiling(p^2 * ifelse(length(edge_density) == 1, edge_density, edge_density[lag]))
+    temp = sample(p^2, e_d)
+    temp_v = rep(0, p^2); temp_v[temp] = 1
+    A[[lag]] = array(temp_v, c(p,p))
+    if (ifelse(length(nonzero_diag) == 1, nonzero_diag, nonzero_diag[lag]))
+      diag(A[[lag]]) = 1
+  }
+  
+  if (stationary){
+    A.big = array(0, c(p*d, p*d))
+    
+    for (i in 1:d)
+      A.big[1:p, ((i-1)*p+1):(i*p)] = max_eig*A[[i]]
+    
+    if (d > 1)
+      diag(A.big[(p+1):(p*d), 1:((d-1)*p)]) = 1
+    
+    temp = max(abs(eigen(A.big)$values))
+    count = 0
+    while (temp > max_eig){
+      count = count+1
+      print(paste("count:", count, "max_eigen_value:", round(temp, 2), "signal:", round(max(abs(A.big[1:p,])), 2)))
+      A.big[1:p,] = A.big[1:p,]*0.95
+      temp = max(abs(eigen(A.big)$values))
+    }
+    
+    for (i in 1:d)
+      A[[i]] = A.big[1:p, ((i-1)*p+1):(i*p)]
+    print(paste("signal reduced to", round(max(abs(A.big[1:p,])), 2)))
+    
+  }
+  return(A)
+}
+
+require(MASS)
+gen_dat = function(	# returns a p x T matrix of observations {X^1, ..., X^T}
+  Ti #size
+  ,error_sd  # optional, a p-dim vector of the individual sdevs of the p time series
+  ,Sigma_error  # input a p x p correlation matrix; otherwise it is set to diag(error_sd) * identity
+  ,SNR 	# signal-to-noise ratio, used to determine error_sd (= abs(A[i,j])/SNR)
+  ,A 	# a list of d adjacency matrices, as returned by gen_A
+  ,cut_T # time to wait before process reaches stability 
+){
+  d = length(A)
+  p = dim(A[[1]])[1]
+  X = array(0, c(p, Ti+cut_T))
+  if(is.null(error_sd))
+    error_sd = rep(max(abs(A[[1]]))/SNR, p)
+  else if (length(error_sd) == 1)
+    error_sd = rep(error_sd, p)
+  
+  if (is.null(Sigma_error))
+    Sigma_error = diag(p)
+  Sigma_error = diag(error_sd) %*% Sigma_error %*% diag(error_sd); #print(round(Sigma_error, 4))
+  
+  X = t(mvrnorm(n = Ti+cut_T, mu = rep(0, p), Sigma = Sigma_error))
+  for (tt in (d+1):(Ti+cut_T))
+    for (lg in 1:d)
+      X[,tt] = X[,tt]+A[[lg]] %*% X[,tt-lg]
+  
+  return(X[,-seq(cut_T)])
+}
+
+
+### Simulation background
+
+nvec=c(100, 500);nn=length(nvec)
+
+kk=c(2, 20);kk1=length(kk)
+
+M=100
+
+NumTst = 3
+
+### M-C simulation
+
+# storage matrices    
+
+Pval = array(0, c(nn, kk1, NumTst))
+Stat = array(0, c(nn, kk1, M, NumTst))
+
+time = proc.time(); 
+
+#pb <- winProgressBar(title="Progress", label="done", min=0, max=100, initial=0)
+
+for (m in 1:M)
+{
+  print(m)
+  for (i in 1:nn)
+  {
+    for (j in 1:kk1)
+    {
+      n = nvec[i]
+      k = kk[j]
+      
+      # model under the alternative
+      
+      a = gen_A(p=k, d=1, edge_density=0.05, nonzero_diag=1, max_eig=0.6, stationary=1)
+      
+      x = gen_dat(Ti=n, error_sd=NULL, Sigma_error=NULL, SNR=1.5, A=a, cut_T=500*length(a))
+      
+      #x=varima.sim(phi=a, d=array(1, dim=(k)),n=n, sigma=diag(c(k:1)), innov=NULL)
+      
+      ### iidness tests
+      
+      #2 L-M (Port)
+      
+      M_LI = LiMcLeod(t(x), lags=1, order=0, SquaredQ=FALSE)
+      
+      #3 Hosking (Port)
+      
+      M_HO = Hosking(t(x), lags=1, order=0, SquaredQ=FALSE)
+      
+      #5 Shape-based runs tests (Paind/Verd paper, full-rank, theta specified, p.10)
+      
+      U = array(0, dim=c(n,k))
+      
+      for (r in (1:n)) {U[r,]=t(x)[r,]/sqrt(sum((t(x)[r,]^2)))}
+      
+      R1=(k^2/(n-1))*sum(diag(U[1:(n-1),]%*%t(U[1:(n-1),])%*%U[2:n,]%*%t(U[2:n,])))
+      
+      # output1 of Sim: rejection rates  
+      Pval[i,j,1] = Pval[i,j,1]+(M_LI[4]<0.05)
+      
+      Pval[i,j,2] = Pval[i,j,2]+(M_HO[4]<0.05)
+      
+      p3 = 1-pchisq(R1,df=1*k^2)
+      Pval[i,j,3] = Pval[i,j,3]+(p3<0.05)
+      
+      # output2 of Sim: statistics
+      
+      Stat[i,j,m,1]=M_LI[1]
+      Stat[i,j,m,2]=M_HO[2]
+      Stat[i,j,m,3]=R1
+    
+      #Sys.sleep(0.1) 
+      #info <- sprintf("%d%% done", round((m/M)*100))
+      #setWinProgressBar(pb, m/(M)*100, label=info)
+      
+      ###
+      
+    }
+  }
+}
+
+Pval=Pval/M
+
+### Plots
+
+# histograms
+
+colos=c(color = brewer.pal(NumTst, "Pastel2"))
+
+par(mfrow=c(kk1,nn))	
+par(mar=c(3,2,1,2));
+par(oma=c(2,3,2,0));
+
+for (ii in (1:nn))
+{
+  for (jj in (1:kk1))
+  {
+    
+    barplot(Pval[ii,jj,], col = colos, xlab="",ylab="", main="", ylim=c(0, 1.0))
+    
+    abline(h=0.95, col='black')
+    
+    if (jj==1) {mtext(paste("n=",nvec[ii],sep=""),line=3,side=2,cex=0.75)}
+    if (ii==1) {mtext(paste("k=",kk[jj],sep=""),line=2,side=3,cex=0.8)}
+    
+  }
+}
+
+# legend
+
+par(fig = c(0, 1, 0, 1), oma = c(0, 0, 0, 0), mar = c(0, 0, 0, 0), new = TRUE)
+plot(0, 0, type = "n", bty = "n", xaxt = "n", yaxt = "n")
+legend("bottom", c("Li&Mc", "Hosking", "Shape-based runs"), xpd = TRUE, horiz = TRUE, 
+       inset = c(0, 0), bty = "n", pch = c(15, 15, 15), col = colos, cex = 1.1)
+
+### end
+
+
+
+
+
+
+
+
+
