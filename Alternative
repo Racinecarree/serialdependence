@@ -88,11 +88,11 @@ gen_dat = function(	# returns a p x T matrix of observations {X^1, ..., X^T}
 
 ### Simulation background
 
-nvec=c(100, 500);nn=length(nvec)
+nvec=c(150, 500, 1000);nn=length(nvec)
 
-kk=c(2, 20);kk1=length(kk)
+kk=c(2, 10, 100);kk1=length(kk)
 
-M=100
+M=1000
 
 NumTst = 3
 
@@ -105,7 +105,7 @@ Stat = array(0, c(nn, kk1, M, NumTst))
 
 time = proc.time(); 
 
-#pb <- winProgressBar(title="Progress", label="done", min=0, max=100, initial=0)
+pb <- winProgressBar(title="Progress", label="done", min=0, max=100, initial=0)
 
 for (m in 1:M)
 {
@@ -119,17 +119,18 @@ for (m in 1:M)
       
       # model under the alternative
       
-      a = gen_A(p=k, d=1, edge_density=0.05, nonzero_diag=1, max_eig=0.6, stationary=1)
+      a = gen_A(p=k, d=1, edge_density=0.05, nonzero_diag=1, max_eig=0.2, stationary=1)
       
-      x = gen_dat(Ti=n, error_sd=NULL, Sigma_error=NULL, SNR=1.5, A=a, cut_T=500*length(a))
+      x = gen_dat(Ti=n, error_sd=NULL, Sigma_error=NULL, SNR=2.0, A=a, cut_T=500*length(a))
       
       #x=varima.sim(phi=a, d=array(1, dim=(k)),n=n, sigma=diag(c(k:1)), innov=NULL)
+      
       
       ### iidness tests
       
       #2 L-M (Port)
       
-      M_LI = LiMcLeod(t(x), lags=1, order=0, SquaredQ=FALSE)
+      M_LI = LiMcLeod(t(x), lags=1, order=0, SquaredQ=FALSE); M_LI
       
       #3 Hosking (Port)
       
@@ -157,9 +158,9 @@ for (m in 1:M)
       Stat[i,j,m,2]=M_HO[2]
       Stat[i,j,m,3]=R1
     
-      #Sys.sleep(0.1) 
-      #info <- sprintf("%d%% done", round((m/M)*100))
-      #setWinProgressBar(pb, m/(M)*100, label=info)
+      Sys.sleep(0.1) 
+      info <- sprintf("%d%% done", round((m/M)*100))
+      setWinProgressBar(pb, m/(M)*100, label=info)
       
       ###
       
@@ -186,7 +187,7 @@ for (ii in (1:nn))
     
     barplot(Pval[ii,jj,], col = colos, xlab="",ylab="", main="", ylim=c(0, 1.0))
     
-    abline(h=0.95, col='black')
+    abline(h=1.0, col='black')
     
     if (jj==1) {mtext(paste("n=",nvec[ii],sep=""),line=3,side=2,cex=0.75)}
     if (ii==1) {mtext(paste("k=",kk[jj],sep=""),line=2,side=3,cex=0.8)}
@@ -202,6 +203,11 @@ legend("bottom", c("Li&Mc", "Hosking", "Shape-based runs"), xpd = TRUE, horiz = 
        inset = c(0, 0), bty = "n", pch = c(15, 15, 15), col = colos, cex = 1.1)
 
 ### end
+
+
+
+
+
 
 
 
