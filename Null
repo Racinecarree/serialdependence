@@ -1,0 +1,125 @@
+library("MTS"); library("clusterGeneration"); library("plotrix"); library("RColorBrewer")
+library("MASS"); library("portes"); library ("parallel"); library("mvtnorm"); library("plotly"); 
+
+set.seed(1234)
+
+###
+
+nvec=c(150, 500, 1000);nn=length(nvec)
+
+kk=c(2, 50, 100);kk1=length(kk)
+
+M=1000
+
+NumTst=3
+
+###
+
+#storage matrices    
+
+Pval=array(0, c(nn, kk1, NumTst))
+#Stat=array(0, c(nn, kk1, M, NumTst))
+
+time=proc.time();    
+
+for (m in 1:M)
+{
+  print(m)
+  for (i in 1:nn)
+  {
+    for (j in 1:kk1)
+    {
+      n=nvec[i]
+      k=kk[j]
+      
+      #model under the null
+      
+      #sig=diag(c(k:1))
+      
+      #sig=diag(1, k, k)
+      
+      sig=diag(1,k,k)+matrix(1,k,k)*0,1
+      
+      x=rmvnorm(n, diag(diag(k))-diag(diag(k)), sig)
+      
+      ###tests
+      
+      #2 Li&McLeod (Port)
+      
+      M_LI=LiMcLeod(x, lags=1, order=0, SquaredQ=FALSE)
+      
+      #3 Hosking (Port)
+      
+      M_HO=Hosking(x, lags=1, order=0, SquaredQ=FALSE)
+      
+      #4 Shape-based runs tests (Paind/Verd paper, full-rank, theta specified, p.10)
+      
+      U=array(0, dim=c(n,k))
+      
+      for (r in (1:n)) {U[r,]=x[r,]/sqrt(sum((x[r,]^2)))}
+      
+      R1=(k^2/(n-1))*sum(diag(U[1:(n-1),]%*%t(U[1:(n-1),])%*%U[2:n,]%*%t(U[2:n,])))
+      
+      #output1 of Sim: Statistics
+      
+      #Stat[i,j,m,1]=M_LI[2]
+      #Stat[i,j,m,2]=M_HO[2]
+      #Stat[i,j,m,3]=R1
+      
+      #output2 of Sim: Rejection rate  
+      
+      Pval[i,j,1]=Pval[i,j,2]+(M_LI[4]<0.05)
+      Pval[i,j,2]=Pval[i,j,3]+(M_HO[4]<0.05)
+      
+      p3=1-pchisq(R1,df=1*k^2)
+      Pval[i,j,3]=Pval[i,j,3]+(p3<0.05)
+      
+      ###
+      
+    }
+  }
+}
+
+Pval=Pval/M
+
+#plots
+
+
+colos=c(color = brewer.pal(NumTst, "Pastel2"))
+
+par(mfrow=c(kk1,nn))	
+par(mar=c(3,2,1,2));
+par(oma=c(2,3,2,0));
+
+
+for (ii in (1:nn))
+  {
+  for (jj in (1:kk1))
+    {
+    
+    barplot(Pval[ii,jj,2:4], col=colos, xlab="",ylab="", main="", ylim=c(0, .2))
+        
+    abline(h=0.05, col='black')
+  
+    if (jj==1) {mtext(paste("n=",nvec[ii],sep=""),line=3,side=2,cex=0.75)}
+    if (ii==1) {mtext(paste("k=",kk[jj],sep=""),line=2,side=3,cex=0.8)}
+  
+  }
+}
+
+#Legend
+
+par(fig = c(0, 1, 0, 1), oma = c(0, 0, 0, 0), mar = c(0, 0, 0, 0), new = TRUE)
+plot(0, 0, type = "n", bty = "n", xaxt = "n", yaxt = "n")
+legend("bottom", c("Li&Mc", "Hosking", "Shape-based runs"), xpd = TRUE, horiz = TRUE, 
+       inset = c(0, 0), bty = "n", pch = c(15, 15, 15), col = colos, cex = 1.1)
+
+###
+
+
+
+
+
+
+
+
